@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Исправленная игра — Собери яблоки</title>
+<style>
+  body{margin:0;font-family:Arial,Segoe UI,Roboto;background:#e7f6ff;padding:20px;display:flex;justify-content:center}
+  .gameWrapper{background:#fff;padding:16px;border-radius:12px;max-width:900px;width:100%;box-shadow:0 4px 16px rgba(0,0,0,0.12)}
+  #topRow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  #gameArea{width:100%;height:500px;background:#f9fff0;border:3px solid #bde3a1;border-radius:10px;position:relative;overflow:hidden;margin-top:12px}
+  .player{width:48px;height:48px;background:#ff9d9d;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:bold;position:absolute;user-select:none}
+  .item{width:40px;height:40px;background:#8af57a;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:bold;position:absolute;user-select:none}
+  #hud{font-size:18px;margin-top:10px;font-weight:bold}
+  .controls{display:flex;gap:8px;align-items:center}
+  label{font-size:14px;color:#333}
+  input[type=range]{vertical-align:middle}
+  .small{padding:8px 10px;border-radius:8px;border:1px solid #ddd;background:#f7f7f7;cursor:pointer}
+  .bigbtn{padding:10px 14px;border-radius:10px;border:none;background:#2d9cdb;color:#fff;cursor:pointer}
+  .firework-particle{position:absolute;width:8px;height:8px;border-radius:50%;pointer-events:none}
+
+  /* ⭐ ДОБАВЛЕНО: Красивое финальное сообщение */
+  #winText{
+     position:absolute;
+     top:50%; left:50%;
+     transform:translate(-50%,-50%);
+     font-size:64px;
+     font-weight:900;
+     color:#ffe600;
+     text-shadow:0 0 18px red, 0 0 36px orange, 0 0 60px yellow;
+     display:none;
+     z-index:3000;
+     animation:pop 1.2s ease-out forwards;
+     text-align:center;
+     padding:8px 16px;
+     pointer-events:none;
+  }
+
+  @keyframes pop {
+    0%   { transform:translate(-50%,-50%) scale(0.4); opacity:0; }
+    60%  { transform:translate(-50%,-50%) scale(1.15); opacity:1; }
+    100% { transform:translate(-50%,-50%) scale(1); opacity:1; }
+  }
+
+</style>
+</head>
+<body>
+<div class="gameWrapper">
+  <h2>Собери яблоки — адаптированная игра</h2>
+  <div id="topRow">
+    <div class="controls">
+      <button id="startBtn" class="bigbtn">Старт</button>
+      <button id="resetBtn" class="small">Сброс</button>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:center;margin-left:12px;flex-wrap:wrap">
+      <label>Скорость: <span id="speedVal">5</span>
+        <input id="speed" type="range" min="1" max="12" value="5" style="width:160px;margin-left:6px" />
+      </label>
+
+      <label>Яблок: <span id="countVal">5</span>
+        <input id="count" type="range" min="1" max="12" value="5" style="width:160px;margin-left:6px" />
+      </label>
+    </div>
+  </div>
+
+  <div id="hud">Собрано: 0 / 5</div>
+
+  <div id="gameArea" tabindex="0" aria-label="Игровая зона">
+      <!-- ⭐ ДОБАВЛЕНО: надпись победы (оставляем в DOM, её не затираем) -->
+      <div id="winText">Молодец!<br/>Все яблоки собраны!</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const gameArea = document.getElementById('gameArea');
+  const hud = document.getElementById('hud');
+  const winText = document.getElementById('winText'); // ⭐ постоянная ссылка
+  const startBtn = document.getElementById('startBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const speedInput = document.getElementById('speed');
+  const speedVal = document.getElementById('speedVal');
+  const countInput = document.getElementById('count');
+  const countVal = document.getElementById('countVal');
+
+  let player = null;
+  let items = [];
+  let collected = 0;
+  let total = Number(countInput.value) || 5;
+  let speed = Number(speedInput.value) || 5;
+  let active = false;
+  let loop = null;
+
+  function rand(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
+
+  function updateHUD(){ hud.textContent = `Собрано: ${collected} / ${total}`; }
+
+  // НЕ затираем весь innerHTML чтобы не удалять winText
+  function clearArea(){
+    // удаляем все элементы .item
+    const existingItems = Array.from(gameArea.querySelectorAll('.item'));
+    existingItems.forEach(it => it.remove());
+    items = [];
+    // удаляем игрок, если есть
+    const existingPlayer = document.getElementById('player');
+    if(existingPlayer) existingPlayer.remove();
+    player = null;
+    // прячем сообщение о победе (не удаляем)
+    if(winText) winText.style.display = 'none';
+  }
+
+  function createPlayer(){
+    const rect = gameArea.getBoundingClientRect();
+    const el = document.createElement('div');
+    el.id = 'player';
+    el.className = 'player';
+    el.textContent = '🙂';
+    el.style.left = Math.round(rect.width/2 - 24) + 'px';
+    el.style.top = Math.round(rect.height/2 - 24) + 'px';
+    gameArea.appendChild(el);
+    return el;
+  }
+
+  function placeItems(n){
+    const rect = gameArea.getBoundingClientRect();
+    const padding = 8;
+    const maxX = Math.max(0, rect.width - 40 - padding);
+    const maxY = Math.max(0, rect.height - 40 - padding);
+    for(let i=0;i<n;i++){
+      const it = document.createElement('div');
+      it.className = 'item';
+      it.textContent = '🍎';
+      const x = rand(padding, maxX);
+      const y = rand(padding, maxY);
+      it.style.left = x+'px';
+      it.style.top = y+'px';
+      gameArea.appendChild(it);
+      items.push(it);
+    }
+  }
+
+  function startGame(){
+    // скрываем сообщение и сбрасываем старое состояние аккуратно
+    if(winText) winText.style.display = 'none';
+    clearInterval(loop);
+    clearArea();
+
+    collected = 0;
+    total = Number(countInput.value) || 5;
+    speed = Number(speedInput.value) || 5;
+    speedVal.textContent = speed;
+    countVal.textContent = total;
+    updateHUD();
+
+    // создаём игрок и яблоки
+    player = createPlayer();
+    // tiny delay to ensure layout (in some browsers) so getBoundingClientRect works correctly
+    setTimeout(()=> placeItems(total), 10);
+
+    active = true;
+    // шаг цикла
+    loop = setInterval(gameStep, 30);
+    // фокусируем зону чтобы стрелки работали
+    try{ gameArea.focus(); }catch(e){}
+  }
+
+  function resetGame(){
+    active = false;
+    clearInterval(loop);
+    clearArea();
+    collected = 0;
+    total = Number(countInput.value) || 5;
+    updateHUD();
+    hud.textContent = 'Нажми Старт, чтобы начать.';
+  }
+
+  function clamp(v,min,max){ return Math.max(min, Math.min(max,v)); }
+
+  function gameStep(){
+    if(!active || !player) return;
+    const rect = gameArea.getBoundingClientRect();
+    const px = parseInt(player.style.left,10) || 0;
+    const py = parseInt(player.style.top,10) || 0;
+
+    let dx = 0, dy = 0;
+    if(keys.left) dx -= speed;
+    if(keys.right) dx += speed;
+    if(keys.up) dy -= speed;
+    if(keys.down) dy += speed;
+
+    const nx = clamp(px + dx, 0, rect.width - player.offsetWidth);
+    const ny = clamp(py + dy, 0, rect.height - player.offsetHeight);
+
+    player.style.left = Math.round(nx) + 'px';
+    player.style.top  = Math.round(ny) + 'px';
+
+    checkCollision();
+  }
+
+  function checkCollision(){
+    if(!player) return;
+    const px = parseInt(player.style.left,10) || 0;
+    const py = parseInt(player.style.top,10) || 0;
+    const pw = player.offsetWidth, ph = player.offsetHeight;
+
+    for(let i = items.length - 1; i >= 0; i--){
+      const it = items[i];
+      if(!it) continue;
+      const ix = parseInt(it.style.left,10) || 0;
+      const iy = parseInt(it.style.top,10) || 0;
+      const iw = it.offsetWidth, ih = it.offsetHeight;
+
+      if(px < ix+iw && px+pw > ix && py < iy+ih && py+ph > iy){
+        // собрали
+        createSmallFirework(ix + iw/2, iy + ih/2);
+        it.remove();
+        items.splice(i,1);
+        collected++;
+        updateHUD();
+
+        if(collected >= total){
+          finishGame();
+        }
+      }
+    }
+  }
+
+  /* Финал: большая надпись + крупный салют */
+  function finishGame(){
+    active = false;
+    clearInterval(loop);
+    if(winText){
+      winText.style.display = 'block';
+      // Re-trigger animation by forcing reflow
+      winText.style.animation = 'none';
+      void winText.offsetWidth;
+      winText.style.animation = null;
+    }
+    spawnBigFireworks();
+  }
+
+  /* Большой салют: множество точек по полю */
+  function spawnBigFireworks(){
+    const count = 180;
+    for(let i=0;i<count;i++){
+      setTimeout(()=>{
+        const x = rand(80, Math.max(100, gameArea.clientWidth - 80));
+        const y = rand(80, Math.max(100, gameArea.clientHeight - 80));
+        createBigFireworkBurst(x,y);
+      }, i * 12);
+    }
+  }
+
+  /* Небольшой салют при подборе */
+  function createSmallFirework(cx, cy){
+    const colors = ['#ff7b7b','#ffd36b','#9be66b','#7bd3ff','#d08bff'];
+    for(let i=0;i<12;i++){
+      const p = document.createElement('div');
+      p.className = 'firework-particle';
+      p.style.left = cx + 'px';
+      p.style.top = cy + 'px';
+      p.style.background = colors[i % colors.length];
+      gameArea.appendChild(p);
+
+      const angle = Math.random() * Math.PI * 2;
+      const sp = 1.5 + Math.random() * 2;
+      const vx = Math.cos(angle) * sp;
+      const vy = Math.sin(angle) * sp;
+      const life = 500;
+      const start = performance.now();
+
+      (function anim(){
+        const now = performance.now();
+        const t = (now - start) / life;
+        if(t > 1){ p.remove(); return; }
+        p.style.left = (cx + vx * t * 70) + 'px';
+        p.style.top  = (cy + vy * t * 70) + 'px';
+        p.style.opacity = String(1 - t);
+        requestAnimationFrame(anim);
+      })();
+    }
+  }
+
+  /* Большой яркий взрыв */
+  function createBigFireworkBurst(cx, cy){
+    const colors = ['#ff3b3b','#ffd36b','#9be66b','#7bd3ff','#d08bff','#ff8bd1','#ffd58b'];
+    const num = 28 + Math.floor(Math.random()*20);
+    for(let i=0;i<num;i++){
+      const p = document.createElement('div');
+      p.className = 'firework-particle';
+      p.style.width = '10px';
+      p.style.height = '10px';
+      p.style.left = cx + 'px';
+      p.style.top = cy + 'px';
+      p.style.background = colors[i % colors.length];
+      p.style.boxShadow = '0 0 12px ' + colors[i % colors.length];
+      gameArea.appendChild(p);
+
+      const angle = Math.random() * Math.PI * 2;
+      const sp = 2 + Math.random() * 4;
+      const vx = Math.cos(angle) * sp;
+      const vy = Math.sin(angle) * sp;
+      const life = 1000 + Math.random() * 800;
+      const start = performance.now();
+
+      (function anim(){
+        const now = performance.now();
+        const t = (now - start) / life;
+        if(t > 1){ p.remove(); return; }
+        p.style.left = (cx + vx * t * 140) + 'px';
+        p.style.top  = (cy + vy * t * 140 + t * t * 40) + 'px';
+        p.style.opacity = String(1 - t);
+        p.style.transform = `scale(${1 - 0.6 * t})`;
+        requestAnimationFrame(anim);
+      })();
+    }
+  }
+
+  // Управление стрелками
+  const keys = {left:false,right:false,up:false,down:false};
+  window.addEventListener('keydown',(e)=>{
+    if(!active) return;
+    if(e.key === 'ArrowLeft'){ keys.left = true; e.preventDefault(); }
+    if(e.key === 'ArrowRight'){ keys.right = true; e.preventDefault(); }
+    if(e.key === 'ArrowUp'){ keys.up = true; e.preventDefault(); }
+    if(e.key === 'ArrowDown'){ keys.down = true; e.preventDefault(); }
+  });
+  window.addEventListener('keyup',(e)=>{
+    if(e.key === 'ArrowLeft') keys.left = false;
+    if(e.key === 'ArrowRight') keys.right = false;
+    if(e.key === 'ArrowUp') keys.up = false;
+    if(e.key === 'ArrowDown') keys.down = false;
+  });
+
+  speedInput.addEventListener('input', (e)=>{ speed = Number(e.target.value) || 5; speedVal.textContent = speed; });
+  countInput.addEventListener('input', (e)=>{ countVal.textContent = e.target.value; });
+
+  startBtn.addEventListener('click', startGame);
+  resetBtn.addEventListener('click', resetGame);
+
+  // стартовое состояние
+  resetGame();
+
+})();
+</script>
+</body>
+</html>
