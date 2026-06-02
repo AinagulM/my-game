@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Собери яблоки</title>
+<style>
+  body{margin:0;font-family:Arial,Segoe UI,Roboto;background:#e7f6ff;padding:20px;display:flex;justify-content:center}
+  .gameWrapper{background:#fff;padding:16px;border-radius:12px;max-width:940px;width:100%;box-shadow:0 4px 16px rgba(0,0,0,0.12)}
+  #topRow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  #gameArea{width:100%;height:520px;background:#f9fff0;border:3px solid #bde3a1;border-radius:10px;position:relative;overflow:hidden;margin-top:12px}
+  .player{width:48px;height:48px;background:#ff9d9d;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:bold;position:absolute;user-select:none;z-index:20;transition:transform .08s ease}
+  .player.hit{transform:scale(0.92)}
+  .item{width:40px;height:40px;background:#8af57a;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:bold;position:absolute;user-select:none;z-index:10}
+  .obstacle{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:32px;position:absolute;user-select:none;z-index:18;filter:drop-shadow(0 2px 4px rgba(0,0,0,.18))}
+  #hud{font-size:18px;margin-top:10px;font-weight:bold;display:flex;flex-wrap:wrap;gap:14px}
+  .controls{display:flex;gap:8px;align-items:center}
+  label{font-size:14px;color:#333}
+  input[type=range]{vertical-align:middle}
+  .small{padding:8px 10px;border-radius:8px;border:1px solid #ddd;background:#f7f7f7;cursor:pointer}
+  .bigbtn{padding:10px 14px;border-radius:10px;border:none;background:#2d9cdb;color:#fff;cursor:pointer}
+  .checkWrap{display:flex;align-items:center;gap:6px;background:#f7f7f7;border:1px solid #ddd;padding:8px 10px;border-radius:10px}
+  .firework-particle{position:absolute;width:8px;height:8px;border-radius:50%;pointer-events:none}
+  #winText{
+     position:absolute;
+     top:50%; left:50%;
+     transform:translate(-50%,-50%);
+     font-size:64px;
+     font-weight:900;
+     color:#ffe600;
+     text-shadow:0 0 18px red, 0 0 36px orange, 0 0 60px yellow;
+     display:none;
+     z-index:3000;
+     animation:pop 1.2s ease-out forwards;
+     text-align:center;
+     padding:8px 16px;
+     pointer-events:none;
+  }
+  #hintText{
+     position:absolute;
+     top:14px; right:14px;
+     background:rgba(255,255,255,.85);
+     padding:8px 12px;
+     border-radius:12px;
+     border:1px solid #ddd;
+     font-size:14px;
+     display:none;
+     z-index:2000;
+  }
+  @keyframes pop {
+    0%   { transform:translate(-50%,-50%) scale(0.4); opacity:0; }
+    60%  { transform:translate(-50%,-50%) scale(1.15); opacity:1; }
+    100% { transform:translate(-50%,-50%) scale(1); opacity:1; }
+  }
+</style>
+</head>
+<body>
+<div class="gameWrapper">
+  <h2>Игра "Собери яблоки"</h2>
+  <div id="topRow">
+    <div class="controls">
+      <button id="startBtn" class="bigbtn">Старт</button>
+      <button id="resetBtn" class="small">Сброс</button>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:center;margin-left:12px;flex-wrap:wrap">
+      <label>Скорость: <span id="speedVal">5</span>
+        <input id="speed" type="range" min="1" max="12" value="5" style="width:160px;margin-left:6px" />
+      </label>
+
+      <label>Яблок (×4): <span id="countVal">20</span>
+        <input id="count" type="range" min="1" max="12" value="5" style="width:160px;margin-left:6px" />
+      </label>
+
+      <label class="checkWrap">
+        <input id="obstacleToggle" type="checkbox" checked />
+        Добавить колобка-препятствие
+      </label>
+
+      <label class="checkWrap">
+        <input id="musicToggle" type="checkbox" checked />
+        Фоновая музыка
+      </label>
+    </div>
+  </div>
+
+  <div id="hud">
+    <span id="scoreLine">Собрано: 0 / 20</span>
+    <span id="statusLine">Статус: игра не начата</span>
+  </div>
+
+  <div id="gameArea" tabindex="0" aria-label="Игровая зона">
+      <div id="winText">Молодец!<br/>Все яблоки собраны!</div>
+      <div id="hintText">Ой! Колобок помешал.</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const gameArea = document.getElementById('gameArea');
+  const scoreLine = document.getElementById('scoreLine');
+  const statusLine = document.getElementById('statusLine');
+  const winText = document.getElementById('winText');
+  const hintText = document.getElementById('hintText');
+  const startBtn = document.getElementById('startBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const speedInput = document.getElementById('speed');
+  const speedVal = document.getElementById('speedVal');
+  const countInput = document.getElementById('count');
+  const countVal = document.getElementById('countVal');
+  const obstacleToggle = document.getElementById('obstacleToggle');
+  const musicToggle = document.getElementById('musicToggle');
+
+  let player = null;
+  let obstacle = null;
+  let items = [];
+  let collected = 0;
+  let baseCount = Number(countInput.value) || 5;
+  let total = baseCount * 4;
+  let speed = Number(speedInput.value) || 5;
+  let active = false;
+  let loop = null;
+  let obstacleVX = 0;
+  let obstacleVY = 0;
+  let obstacleNextTurn = 0;
+  let hitCooldown = 0;
+  let slowUntil = 0;
+  let audioCtx = null;
+  let hintTimeout = null;
+  let musicMaster = null;
+  let musicTimer = null;
+  let musicStep = 0;
+  let musicStarted = false;
+
+  function rand(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
+  function randFloat(min,max){ return Math.random()*(max-min)+min; }
+  function now(){ return performance.now(); }
+
+  function updateHUD(){
+    scoreLine.textContent = `Собрано: ${collected} / ${total}`;
+    if (!active) return;
+    const slowed = now() < slowUntil;
+    statusLine.textContent = slowed ? 'Статус: колобок замедлил игрока' : 'Статус: собираем яблоки';
+  }
+
+  function clearArea(){
+    Array.from(gameArea.querySelectorAll('.item')).forEach(el => el.remove());
+    Array.from(gameArea.querySelectorAll('.obstacle')).forEach(el => el.remove());
+    const existingPlayer = document.getElementById('player');
+    if(existingPlayer) existingPlayer.remove();
+    items = [];
+    player = null;
+    obstacle = null;
+    if(winText) winText.style.display = 'none';
+    if(hintText) hintText.style.display = 'none';
+  }
+
+  function createPlayer(){
+    const rect = gameArea.getBoundingClientRect();
+    const el = document.createElement('div');
+    el.id = 'player';
+    el.className = 'player';
+    el.textContent = '🙂';
+    el.style.left = Math.round(rect.width/2 - 24) + 'px';
+    el.style.top = Math.round(rect.height/2 - 24) + 'px';
+    gameArea.appendChild(el);
+    return el;
+  }
+
+  function createObstacle(){
+    const rect = gameArea.getBoundingClientRect();
+    const el = document.createElement('div');
+    el.className = 'obstacle';
+    el.textContent = '🥯';
+    const x = rand(8, Math.max(8, rect.width - 60));
+    const y = rand(8, Math.max(8, rect.height - 60));
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    gameArea.appendChild(el);
+    obstacleVX = randFloat(-2.6, 2.6) || 1.8;
+    obstacleVY = randFloat(-2.6, 2.6) || -1.8;
+    obstacleNextTurn = now() + rand(500, 1200);
+    return el;
+  }
+
+  function placeItems(n){
+    const rect = gameArea.getBoundingClientRect();
+    const padding = 16;
+    const itemSize = 40;
+    const minDistance = 78;
+    const positions = [];
+    const maxX = Math.max(padding, rect.width - itemSize - padding);
+    const maxY = Math.max(padding, rect.height - itemSize - padding);
+
+    function farEnough(x, y){
+      for(const pos of positions){
+        const dx = pos.x - x;
+        const dy = pos.y - y;
+        if(Math.hypot(dx, dy) < minDistance) return false;
+      }
+      if (player && intersectsBox(x, y, itemSize, itemSize, parseInt(player.style.left,10), parseInt(player.style.top,10), player.offsetWidth, player.offsetHeight, 26)) return false;
+      if (obstacle && intersectsBox(x, y, itemSize, itemSize, parseInt(obstacle.style.left,10), parseInt(obstacle.style.top,10), obstacle.offsetWidth, obstacle.offsetHeight, 46)) return false;
+      return true;
+    }
+
+    for(let i = 0; i < n; i++){
+      let placed = false;
+      for(let attempt = 0; attempt < 220; attempt++){
+        const x = rand(padding, maxX);
+        const y = rand(padding, maxY);
+        if(!farEnough(x, y)) continue;
+        positions.push({x, y});
+        placed = true;
+        break;
+      }
+      if(!placed){
+        // если поле уже заполнено плотно, постепенно снижаем минимальную дистанцию
+        for(let relaxed = minDistance - 10; relaxed >= 42 && !placed; relaxed -= 8){
+          for(let attempt = 0; attempt < 160; attempt++){
+            const x = rand(padding, maxX);
+            const y = rand(padding, maxY);
+            let ok = true;
+            for(const pos of positions){
+              const dx = pos.x - x;
+              const dy = pos.y - y;
+              if(Math.hypot(dx, dy) < relaxed){ ok = false; break; }
+            }
+            if(ok){ positions.push({x, y}); placed = true; break; }
+          }
+        }
+      }
+    }
+
+    positions.forEach(({x, y}) => {
+      const it = document.createElement('div');
+      it.className = 'item';
+      it.textContent = '🍎';
+      it.style.left = x + 'px';
+      it.style.top = y + 'px';
+      gameArea.appendChild(it);
+      items.push(it);
+    });
+  }
+
+  async function startGame(){
+    if(winText) winText.style.display = 'none';
+    clearInterval(loop);
+    clearArea();
+
+    collected = 0;
+    baseCount = Number(countInput.value) || 5;
+    total = baseCount * 4;
+    speed = Number(speedInput.value) || 5;
+    speedVal.textContent = speed;
+    countVal.textContent = total;
+    statusLine.textContent = obstacleToggle.checked ? 'Статус: колобок активен' : 'Статус: без препятствия';
+    updateHUD();
+
+    player = createPlayer();
+    if(obstacleToggle.checked){
+      obstacle = createObstacle();
+    }
+    setTimeout(()=> placeItems(total), 10);
+
+    hitCooldown = 0;
+    slowUntil = 0;
+    active = true;
+    loop = setInterval(gameStep, 30);
+    await startBackgroundMusic();
+    try{ gameArea.focus(); }catch(e){}
+  }
+
+
+  async function unlockAudioFromGesture(){
+    if(audioCtx && audioCtx.state === 'running') return;
+    await ensureAudio();
+  }
+
+  function resetGame(){
+    active = false;
+    clearInterval(loop);
+    stopBackgroundMusic();
+    clearArea();
+    collected = 0;
+    baseCount = Number(countInput.value) || 5;
+    total = baseCount * 4;
+    countVal.textContent = total;
+    scoreLine.textContent = `Собрано: 0 / ${total}`;
+    statusLine.textContent = 'Статус: игра не начата';
+  }
+
+  function clamp(v,min,max){ return Math.max(min, Math.min(max,v)); }
+
+  function gameStep(){
+    if(!active || !player) return;
+    movePlayer();
+    moveObstacle();
+    checkAppleCollision();
+    checkObstacleCollision();
+  }
+
+  function movePlayer(){
+    const rect = gameArea.getBoundingClientRect();
+    const px = parseInt(player.style.left,10) || 0;
+    const py = parseInt(player.style.top,10) || 0;
+
+    const currentSpeed = now() < slowUntil ? Math.max(2, speed * 0.55) : speed;
+    let dx = 0, dy = 0;
+    if(keys.left) dx -= currentSpeed;
+    if(keys.right) dx += currentSpeed;
+    if(keys.up) dy -= currentSpeed;
+    if(keys.down) dy += currentSpeed;
+
+    const nx = clamp(px + dx, 0, rect.width - player.offsetWidth);
+    const ny = clamp(py + dy, 0, rect.height - player.offsetHeight);
+
+    player.style.left = Math.round(nx) + 'px';
+    player.style.top  = Math.round(ny) + 'px';
+  }
+
+  function moveObstacle(){
+    if(!obstacle || !player) return;
+    const rect = gameArea.getBoundingClientRect();
+    let ox = parseFloat(obstacle.style.left) || 0;
+    let oy = parseFloat(obstacle.style.top) || 0;
+    const ow = obstacle.offsetWidth;
+    const oh = obstacle.offsetHeight;
+
+    const px = parseFloat(player.style.left) || 0;
+    const py = parseFloat(player.style.top) || 0;
+    const pw = player.offsetWidth;
+    const ph = player.offsetHeight;
+
+    // Колобок держится рядом с игроком и хаотично меняет траекторию,
+    // но всё же старается находиться поблизости.
+    const playerCenterX = px + pw / 2;
+    const playerCenterY = py + ph / 2;
+    const obstacleCenterX = ox + ow / 2;
+    const obstacleCenterY = oy + oh / 2;
+    const toPlayerX = playerCenterX - obstacleCenterX;
+    const toPlayerY = playerCenterY - obstacleCenterY;
+    const distance = Math.max(1, Math.hypot(toPlayerX, toPlayerY));
+
+    if (now() > obstacleNextTurn) {
+      const nearBias = 0.22;
+      obstacleVX += (toPlayerX / distance) * nearBias + randFloat(-1.15, 1.15);
+      obstacleVY += (toPlayerY / distance) * nearBias + randFloat(-1.15, 1.15);
+      const cap = 3.2;
+      obstacleVX = clamp(obstacleVX, -cap, cap);
+      obstacleVY = clamp(obstacleVY, -cap, cap);
+      obstacleNextTurn = now() + rand(180, 420);
+    }
+
+    // если колобок ушёл слишком далеко от игрока, мягко возвращаем его ближе
+    if (distance > 170) {
+      obstacleVX += (toPlayerX / distance) * 0.4;
+      obstacleVY += (toPlayerY / distance) * 0.4;
+    }
+
+    ox += obstacleVX;
+    oy += obstacleVY;
+
+    if (ox <= 0 || ox >= rect.width - ow) {
+      obstacleVX *= -1;
+      ox = clamp(ox, 0, rect.width - ow);
+    }
+    if (oy <= 0 || oy >= rect.height - oh) {
+      obstacleVY *= -1;
+      oy = clamp(oy, 0, rect.height - oh);
+    }
+
+    obstacle.style.left = Math.round(ox) + 'px';
+    obstacle.style.top = Math.round(oy) + 'px';
+  }
+
+  function intersectsBox(ax, ay, aw, ah, bx, by, bw, bh, padding = 0){
+    return ax < bx+bw+padding && ax+aw+padding > bx && ay < by+bh+padding && ay+ah+padding > by;
+  }
+
+  function checkAppleCollision(){
+    if(!player) return;
+    const px = parseInt(player.style.left,10) || 0;
+    const py = parseInt(player.style.top,10) || 0;
+    const pw = player.offsetWidth, ph = player.offsetHeight;
+
+    for(let i = items.length - 1; i >= 0; i--){
+      const it = items[i];
+      if(!it) continue;
+      const ix = parseInt(it.style.left,10) || 0;
+      const iy = parseInt(it.style.top,10) || 0;
+      const iw = it.offsetWidth, ih = it.offsetHeight;
+
+      if(intersectsBox(px, py, pw, ph, ix, iy, iw, ih)){
+        createSmallFirework(ix + iw/2, iy + ih/2);
+        it.remove();
+        items.splice(i,1);
+        collected++;
+        updateHUD();
+
+        if(collected >= total){
+          finishGame();
+        }
+      }
+    }
+  }
+
+  function checkObstacleCollision(){
+    if(!player || !obstacle) return;
+    if (now() < hitCooldown) return;
+
+    const px = parseInt(player.style.left,10) || 0;
+    const py = parseInt(player.style.top,10) || 0;
+    const pw = player.offsetWidth, ph = player.offsetHeight;
+
+    const ox = parseInt(obstacle.style.left,10) || 0;
+    const oy = parseInt(obstacle.style.top,10) || 0;
+    const ow = obstacle.offsetWidth, oh = obstacle.offsetHeight;
+
+    if(intersectsBox(px, py, pw, ph, ox, oy, ow, oh, -6)){
+      hitCooldown = now() + 850;
+      slowUntil = now() + 1400;
+      statusLine.textContent = 'Статус: ой! колобок мешает';
+      playSoftBump();
+      showHint();
+      player.classList.add('hit');
+      setTimeout(() => player && player.classList.remove('hit'), 200);
+
+      const rect = gameArea.getBoundingClientRect();
+
+      // При столкновении к ближайшему краю поля отбрасывается игрок, а не колобок.
+      const playerCenterX = px + pw / 2;
+      const playerCenterY = py + ph / 2;
+      const distances = {
+        left: playerCenterX,
+        right: rect.width - playerCenterX,
+        top: playerCenterY,
+        bottom: rect.height - playerCenterY
+      };
+      let nearest = 'left';
+      let minEdgeDistance = distances.left;
+      for (const key of ['right', 'top', 'bottom']) {
+        if (distances[key] < minEdgeDistance) {
+          nearest = key;
+          minEdgeDistance = distances[key];
+        }
+      }
+
+      let targetX = px;
+      let targetY = py;
+      if (nearest === 'left') targetX = 6;
+      if (nearest === 'right') targetX = rect.width - pw - 6;
+      if (nearest === 'top') targetY = 6;
+      if (nearest === 'bottom') targetY = rect.height - ph - 6;
+
+      player.style.left = Math.round(clamp(targetX, 0, rect.width - pw)) + 'px';
+      player.style.top = Math.round(clamp(targetY, 0, rect.height - ph)) + 'px';
+
+      // Колобок остаётся рядом и продолжает мешать собирать яблоки.
+      obstacleNextTurn = now() + rand(220, 420);
+      updateHUD();
+    }
+  }
+
+  function showHint(){
+    if(!hintText) return;
+    hintText.style.display = 'block';
+    clearTimeout(hintTimeout);
+    hintTimeout = setTimeout(() => {
+      if (hintText) hintText.style.display = 'none';
+    }, 1200);
+  }
+
+  function finishGame(){
+    active = false;
+    clearInterval(loop);
+    stopBackgroundMusic();
+    statusLine.textContent = obstacle ? 'Статус: победа, несмотря на препятствие' : 'Статус: победа';
+    if(winText){
+      winText.style.display = 'block';
+      winText.style.animation = 'none';
+      void winText.offsetWidth;
+      winText.style.animation = null;
+    }
+    spawnBigFireworks();
+  }
+
+  function spawnBigFireworks(){
+    const count = 180;
+    for(let i=0;i<count;i++){
+      setTimeout(()=>{
+        const x = rand(80, Math.max(100, gameArea.clientWidth - 80));
+        const y = rand(80, Math.max(100, gameArea.clientHeight - 80));
+        createBigFireworkBurst(x,y);
+      }, i * 12);
+    }
+  }
+
+  function createSmallFirework(cx, cy){
+    const colors = ['#ff7b7b','#ffd36b','#9be66b','#7bd3ff','#d08bff'];
+    for(let i=0;i<12;i++){
+      const p = document.createElement('div');
+      p.className = 'firework-particle';
+      p.style.left = cx + 'px';
+      p.style.top = cy + 'px';
+      p.style.background = colors[i % colors.length];
+      gameArea.appendChild(p);
+
+      const angle = Math.random() * Math.PI * 2;
+      const sp = 1.5 + Math.random() * 2;
+      const vx = Math.cos(angle) * sp;
+      const vy = Math.sin(angle) * sp;
+      const life = 500;
+      const start = performance.now();
+
+      (function anim(){
+        const t = (performance.now() - start) / life;
+        if(t > 1){ p.remove(); return; }
+        p.style.left = (cx + vx * t * 70) + 'px';
+        p.style.top  = (cy + vy * t * 70) + 'px';
+        p.style.opacity = String(1 - t);
+        requestAnimationFrame(anim);
+      })();
+    }
+  }
+
+  function createBigFireworkBurst(cx, cy){
+    const colors = ['#ff3b3b','#ffd36b','#9be66b','#7bd3ff','#d08bff','#ff8bd1','#ffd58b'];
+    const num = 28 + Math.floor(Math.random()*20);
+    for(let i=0;i<num;i++){
+      const p = document.createElement('div');
+      p.className = 'firework-particle';
+      p.style.width = '10px';
+      p.style.height = '10px';
+      p.style.left = cx + 'px';
+      p.style.top = cy + 'px';
+      p.style.background = colors[i % colors.length];
+      p.style.boxShadow = '0 0 12px ' + colors[i % colors.length];
+      gameArea.appendChild(p);
+
+      const angle = Math.random() * Math.PI * 2;
+      const sp = 2 + Math.random() * 4;
+      const vx = Math.cos(angle) * sp;
+      const vy = Math.sin(angle) * sp;
+      const life = 1000 + Math.random() * 800;
+      const start = performance.now();
+
+      (function anim(){
+        const t = (performance.now() - start) / life;
+        if(t > 1){ p.remove(); return; }
+        p.style.left = (cx + vx * t * 140) + 'px';
+        p.style.top  = (cy + vy * t * 140 + t * t * 40) + 'px';
+        p.style.opacity = String(1 - t);
+        p.style.transform = `scale(${1 - 0.6 * t})`;
+        requestAnimationFrame(anim);
+      })();
+    }
+  }
+
+
+  async function ensureAudio(){
+    try{
+      if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if(audioCtx.state !== 'running') await audioCtx.resume();
+      if(!musicMaster){
+        musicMaster = audioCtx.createGain();
+        musicMaster.gain.value = musicToggle && musicToggle.checked ? 0.12 : 0.0;
+        musicMaster.connect(audioCtx.destination);
+      }
+      return true;
+    }catch(e){
+      return false;
+    }
+  }
+
+  async function setMusicEnabled(enabled){
+    if(!(await ensureAudio()) || !musicMaster) return;
+    const t = audioCtx.currentTime;
+    musicMaster.gain.cancelScheduledValues(t);
+    musicMaster.gain.setValueAtTime(musicMaster.gain.value, t);
+    musicMaster.gain.linearRampToValueAtTime(enabled ? 0.12 : 0.0, t + 0.25);
+  }
+
+  function scheduleNote(freq, startTime, duration, type='triangle', volume=0.18){
+    if(!audioCtx || !musicMaster) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, startTime);
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.linearRampToValueAtTime(volume, startTime + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+    osc.connect(gain);
+    gain.connect(musicMaster);
+    osc.start(startTime);
+    osc.stop(startTime + duration + 0.02);
+  }
+
+  async function startBackgroundMusic(){
+    if(!musicToggle || !musicToggle.checked) return;
+    if(!(await ensureAudio())) return;
+    stopBackgroundMusic();
+    musicStarted = true;
+    const melody = [392, 440, 523.25, 440, 392, 349.23, 392, 523.25];
+    const bass = [196, 196, 220, 220, 174.61, 174.61, 196, 196];
+    musicStep = 0;
+    musicTimer = setInterval(() => {
+      if(!active || !musicToggle.checked || !audioCtx || !musicMaster) return;
+      const t = audioCtx.currentTime + 0.02;
+      const m = melody[musicStep % melody.length];
+      const b = bass[musicStep % bass.length];
+      scheduleNote(m, t, 0.24, 'triangle', 0.22);
+      scheduleNote(b, t, 0.36, 'sine', 0.12);
+      if(musicStep % 2 === 0){
+        scheduleNote(m * 2, t + 0.12, 0.12, 'triangle', 0.12);
+      }
+      musicStep += 1;
+    }, 360);
+
+    const t0 = audioCtx.currentTime + 0.03;
+    scheduleNote(melody[0], t0, 0.28, 'triangle', 0.24);
+    scheduleNote(bass[0], t0, 0.38, 'sine', 0.12);
+  }
+
+  function stopBackgroundMusic(){
+    clearInterval(musicTimer);
+    musicTimer = null;
+  }
+
+  async function playSoftBump(){
+    try{
+      if(!(await ensureAudio())) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 330;
+      gain.gain.value = 0.0001;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      const t = audioCtx.currentTime;
+      gain.gain.exponentialRampToValueAtTime(0.028, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.20);
+      osc.start(t);
+      osc.stop(t + 0.21);
+    }catch(e){}
+  }
+
+  const keys = {left:false,right:false,up:false,down:false};
+  window.addEventListener('keydown',(e)=>{
+    if(!active) return;
+    if(e.key === 'ArrowLeft'){ keys.left = true; e.preventDefault(); }
+    if(e.key === 'ArrowRight'){ keys.right = true; e.preventDefault(); }
+    if(e.key === 'ArrowUp'){ keys.up = true; e.preventDefault(); }
+    if(e.key === 'ArrowDown'){ keys.down = true; e.preventDefault(); }
+  });
+  window.addEventListener('keyup',(e)=>{
+    if(e.key === 'ArrowLeft') keys.left = false;
+    if(e.key === 'ArrowRight') keys.right = false;
+    if(e.key === 'ArrowUp') keys.up = false;
+    if(e.key === 'ArrowDown') keys.down = false;
+  });
+
+  speedInput.addEventListener('input', (e)=>{ speed = Number(e.target.value) || 5; speedVal.textContent = speed; });
+  countInput.addEventListener('input', (e)=>{ 
+    baseCount = Number(e.target.value) || 5;
+    total = baseCount * 4;
+    countVal.textContent = total;
+    if(!active) scoreLine.textContent = `Собрано: 0 / ${total}`;
+  });
+  obstacleToggle.addEventListener('change', ()=>{
+    if(!active){
+      statusLine.textContent = obstacleToggle.checked ? 'Статус: колобок будет добавлен' : 'Статус: игра без колобка';
+    }
+  });
+
+  musicToggle.addEventListener('change', async ()=>{
+    await unlockAudioFromGesture();
+    if(musicToggle.checked){
+      if(active){ await startBackgroundMusic(); await setMusicEnabled(true); }
+    } else {
+      setMusicEnabled(false);
+      stopBackgroundMusic();
+    }
+  });
+
+  startBtn.addEventListener('click', async ()=>{ await unlockAudioFromGesture(); await startGame(); });
+  resetBtn.addEventListener('click', resetGame);
+
+  resetGame();
+})();
+</script>
+</body>
+</html>
